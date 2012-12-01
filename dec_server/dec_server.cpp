@@ -63,6 +63,7 @@ int checkquery(int from, int to) {
 			}
 		}
 	}
+	que.clear();
 	return 0;
 }
 
@@ -251,8 +252,9 @@ void setup_server() {
 						write(fileno(stdout), buf, nbytes);
 						char *tstr, command[BUFSIZE];
 						//gets(buf);
-						int len = strlen(buf), start = 0, q, k, end, action;
-
+						int len, start = 0, q, k, end, action;
+						for(q=0;buf[q]!='\r'&&buf[q]!='\n'&&buf[q]!='\0';q++){}
+						len=q;
 						while (start < len - 1) {
 							for (q = start; buf[q] != ';'; q++) {
 							}
@@ -273,6 +275,7 @@ void setup_server() {
 								send(i, out_buf, strlen(out_buf), 0);
 								close(i);
 								FD_CLR(i, &master);
+								break;
 							}
 							tstr = strtok(NULL, " ");
 							char from, to;
@@ -287,6 +290,7 @@ void setup_server() {
 												out_buf,
 												"CONFLICT DETECTED.INSERT FAILED");
 										send(i, out_buf, strlen(out_buf), 0);
+										break;
 									} else {
 										sprintf(out_buf, "INSERT DONE");
 									}
@@ -318,12 +322,16 @@ void setup_server() {
 										write(fileno(stdout), out_buf,
 												strlen(out_buf));
 									}
+								}else if(action==3){
+									for(i=0;i<26;i++)
+										for(j=0;j<26;j++)
+											events[i][j]=0;
 								}
 								tstr = strtok(NULL, " ");
 							}
 						}
 					}
-				} // END handle data from client
+				} // END handle data from client insert E->F A->B B->C C->D; query B F;
 			} // END got new incoming connection
 		} // END looping through file descriptors
 	} // END for(;;)--and you thought it would never end!
@@ -336,7 +344,7 @@ void usage() {
 	printf("dec_server [−h] [-p port-number] [−l file]\n");
 	printf(
 			"−h : Print a usage summary with all options and exit."
-					"-p port-number : Listen on the given port. If not provided, dec_server will listen on port 9090."
-					"−l file : Log all requests and responses to the given file. If not, print all to stdout.\n");
+			"-p port-number : Listen on the given port. If not provided, dec_server will listen on port 9090."
+			"−l file : Log all requests and responses to the given file. If not, print all to stdout.\n");
 	exit(1);
 }
