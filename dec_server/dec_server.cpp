@@ -35,15 +35,14 @@ extern char *optarg;
 extern int optind;
 int lfile = 0;
 FILE *logfile_fd = NULL;
-void *get_in_addr(struct sockaddr *sa)
-{
-    if (sa->sa_family == AF_INET) {
-        return &(((struct sockaddr_in*)sa)->sin_addr);
-    }
+void *get_in_addr(struct sockaddr *sa) {
+	if (sa->sa_family == AF_INET) {
+		return &(((struct sockaddr_in*) sa)->sin_addr);
+	}
 
-    return &(((struct sockaddr_in6*)sa)->sin6_addr);
+	return &(((struct sockaddr_in6*) sa)->sin6_addr);
 }
-int checkquery(int from, int to) {
+int checkquery(int from, int to, char tevents[26][26]) {
 	vector<char> que;
 	char temp;
 	int i, front = 0, back = 0;
@@ -52,11 +51,11 @@ int checkquery(int from, int to) {
 	while (front != back) {
 		temp = que[front];
 		front++;
-		if (events[temp - 'A'][to - 'A'] == 1)
+		if (tevents[temp - 'A'][to - 'A'] == 1)
 			return 1;
 		else {
 			for (i = 0; i < 26; i++) {
-				if (events[temp - 'A'][i] == 1) {
+				if (tevents[temp - 'A'][i] == 1) {
 					que.push_back(i + 'A');
 					back++;
 				}
@@ -67,12 +66,12 @@ int checkquery(int from, int to) {
 	return 0;
 }
 
-int addtograph(char from, char to) {
-	int check = checkquery(from, to);
+int addtograph(char from, char to, char tevents[26][26]) {
+	int check = checkquery(from, to, tevents);
 	if (check == 0) {
-		check = checkquery(to, from);
+		check = checkquery(to, from, tevents);
 		if (check == 0) {
-			events[from - 'A'][to - 'A'] = 1;
+			tevents[from - 'A'][to - 'A'] = 1;
 			return 1;
 		} else
 			return 0;
@@ -123,6 +122,7 @@ int main(int argc, char *argv[]) {
  */
 
 void setup_server() {
+	char tevents[26][26];
 	struct sockaddr_in serv;
 	struct servent *se;
 	socklen_t len;
@@ -145,48 +145,49 @@ void setup_server() {
 
 	char remoteIP[INET6_ADDRSTRLEN];
 
-    int yes=1;        // for setsockopt() SO_REUSEADDR, below
-    int i, j, rv;
+	int yes = 1; // for setsockopt() SO_REUSEADDR, below
+	int i, j, k, rv, add = 0;
 
-    struct addrinfo hints, *ai, *p;
+	struct addrinfo hints, *ai, *p;
 
-    FD_ZERO(&master);    // clear the master and temp sets
-    FD_ZERO(&read_fds);
+	FD_ZERO(&master);
+	// clear the master and temp sets
+	FD_ZERO(&read_fds);
 
-    // get us a socket and bind it
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
-    if ((rv = getaddrinfo(NULL, port, &hints, &ai)) != 0) {
-        fprintf(stderr, "selectserver: %s\n", gai_strerror(rv));
-        exit(1);
-    }
+	// get us a socket and bind it
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_PASSIVE;
+	if ((rv = getaddrinfo(NULL, port, &hints, &ai)) != 0) {
+		fprintf(stderr, "selectserver: %s\n", gai_strerror(rv));
+		exit(1);
+	}
 
-    for(p = ai; p != NULL; p = p->ai_next) {
-        s = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-        if (s < 0) {
-            continue;
-        }
+	for (p = ai; p != NULL; p = p->ai_next) {
+		s = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+		if (s < 0) {
+			continue;
+		}
 
-        // lose the pesky "address already in use" error message
-        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
+		// lose the pesky "address already in use" error message
+		setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
 
-        if (bind(s, p->ai_addr, p->ai_addrlen) < 0) {
-            close(s);
-            continue;
-        }
+		if (bind(s, p->ai_addr, p->ai_addrlen) < 0) {
+			close(s);
+			continue;
+		}
 
-        break;
-    }
+		break;
+	}
 
-    // if we got here, it means we didn't get bound
-    if (p == NULL) {
-        fprintf(stderr, "selectserver: failed to bind\n");
-        exit(2);
-    }
+	// if we got here, it means we didn't get bound
+	if (p == NULL) {
+		fprintf(stderr, "selectserver: failed to bind\n");
+		exit(2);
+	}
 
-    freeaddrinfo(ai); // all done with this
+	freeaddrinfo(ai); // all done with this
 	//fprintf(stderr, "Port number is %d\n", ntohs(remote.sin_port));
 
 	// listen
@@ -228,10 +229,8 @@ void setup_server() {
 						printf(
 								"selectserver: new connection from %s on "
 										"socket %d\n",
-								inet_ntop(
-										remote.ss_family,
-										get_in_addr(
-												(struct sockaddr*) &remote),
+								inet_ntop(remote.ss_family,
+										get_in_addr((struct sockaddr*) &remote),
 										remoteIP, INET6_ADDRSTRLEN), sock);
 					}
 				} else {
@@ -252,82 +251,120 @@ void setup_server() {
 						write(fileno(stdout), buf, nbytes);
 						char *tstr, command[BUFSIZE];
 						//gets(buf);
-						int len, start = 0, q, k, end, action;
-						for(q=0;buf[q]!='\r'&&buf[q]!='\n'&&buf[q]!='\0';q++){}
-						len=q;
-						while (start < len - 1) {
-							for (q = start; buf[q] != ';'; q++) {
+						int len, start = 0, q, end, action;
+						for (q = 0;
+								buf[q] != '\r' && buf[q] != '\n'
+										&& buf[q] != '\0'; q++) {
+						}
+						len = q;
+						q = 0;
+						for (j = 0; j < 26; j++) {
+							for (k = 0; k < 26; k++) {
+								tevents[j][k] = events[j][k];
 							}
-							end = q;
-							for (q = start, k = 0; q < end; q++, k++)
-								command[k] = buf[q];
-							command[k] = '\0';
-							start = end + 1;
-							tstr = strtok(command, " ");
-							if (strcmp(tstr, "insert") == 0)
-								action = 1;
-							else if (strcmp(tstr, "query") == 0)
-								action = 2;
-							else if (strcmp(tstr, "reset") == 0)
-								action = 3;
-							else {
+						}
+						char *bound;
+						while (start < len - 1) {
+							bound = strchr(buf, ';');
+							if (bound != NULL) {
+								for (q = start; buf[q] != ';'; q++) {
+								}
+								end = q;
+								for (q = start, k = 0; q < end; q++, k++)
+									command[k] = buf[q];
+								command[k] = '\0';
+								start = end + 1;
+								tstr = strtok(command, " ");
+								if (strcmp(tstr, "insert") == 0)
+									action = 1;
+								else if (strcmp(tstr, "query") == 0)
+									action = 2;
+								else if (strcmp(tstr, "reset") == 0)
+									action = 3;
+								else {
+									sprintf(out_buf, "Wrong Command!");
+									send(i, out_buf, strlen(out_buf), 0);
+									close(i);
+									FD_CLR(i, &master);
+									break;
+								}
+								tstr = strtok(NULL, " ");
+								char from, to;
+								int cnt = 0, check;
+
+								while (tstr != NULL) {
+									if (action == 1) {
+										from = tstr[0];
+										to = tstr[3];
+										add = addtograph(from, to, tevents);
+										if (add == 0) {
+											sprintf(
+													out_buf,
+													"CONFLICT DETECTED.INSERT FAILED");
+											send(i, out_buf, strlen(out_buf),
+													0);
+											write(fileno(stdout), out_buf,
+													strlen(out_buf));
+											break;
+										} else {
+											sprintf(out_buf, "INSERT DONE");
+										}
+										write(fileno(stdout), out_buf,
+												strlen(out_buf));
+									} else if (action == 2) {
+										if (cnt == 0) {
+											from = tstr[0];
+											cnt++;
+										} else {
+											to = tstr[0];
+											check = checkquery(from, to,
+													tevents);
+											if (check == 0) {
+												check = checkquery(to, from,
+														tevents);
+												if (check == 0) {
+													sprintf(
+															out_buf,
+															"%c concurrent to %c",
+															from, to);
+												} else
+													sprintf(
+															out_buf,
+															"%c happened before %c",
+															to, from);
+											} else if (check == 1) {
+												sprintf(out_buf,
+														"%c happened before %c",
+														from, to);
+											}
+											send(i, out_buf, strlen(out_buf),
+													0);
+											write(fileno(stdout), out_buf,
+													strlen(out_buf));
+										}
+									} else if (action == 3) {
+										for (i = 0; i < 26; i++)
+											for (j = 0; j < 26; j++)
+												events[i][j] = 0;
+									}
+									tstr = strtok(NULL, " ");
+								}
+							} else {
 								sprintf(out_buf, "Wrong Command!");
 								send(i, out_buf, strlen(out_buf), 0);
 								close(i);
 								FD_CLR(i, &master);
 								break;
 							}
-							tstr = strtok(NULL, " ");
-							char from, to;
-							int cnt = 0, add, check;
-							while (tstr != NULL) {
-								if (action == 1) {
-									from = tstr[0];
-									to = tstr[3];
-									add = addtograph(from, to);
-									if (add == 0) {
-										sprintf(
-												out_buf,
-												"CONFLICT DETECTED.INSERT FAILED");
-										send(i, out_buf, strlen(out_buf), 0);
-										break;
-									} else {
-										sprintf(out_buf, "INSERT DONE");
-									}
-									write(fileno(stdout), out_buf,
-											strlen(out_buf));
-								} else if (action == 2) {
-									if (cnt == 0) {
-										from = tstr[0];
-										cnt++;
-									} else {
-										to = tstr[0];
-										check = checkquery(from, to);
-										if (check == 0) {
-											check = checkquery(to, from);
-											if (check == 0) {
-												sprintf(out_buf,
-														"%c concurrent to %c",
-														from, to);
-											} else
-												sprintf(out_buf,
-														"%c happened before %c",
-														to, from);
-										} else if (check == 1) {
-											sprintf(out_buf,
-													"%c happened before %c",
-													from, to);
-										}
-										send(i, out_buf, strlen(out_buf), 0);
-										write(fileno(stdout), out_buf,
-												strlen(out_buf));
-									}
-								}else if(action==3){
-									for(i=0;i<26;i++)
-										for(j=0;j<26;j++)
-											events[i][j]=0;
+
+							if (add == 0)
+								break;
+						}
+						if (add != 0) {
+							for (j = 0; j < 26; j++) {
+								for (k = 0; k < 26; k++) {
+									events[j][k] = tevents[j][k];
 								}
-								tstr = strtok(NULL, " ");
 							}
 						}
 					}
@@ -336,7 +373,6 @@ void setup_server() {
 		} // END looping through file descriptors
 	} // END for(;;)--and you thought it would never end!
 
-
 }
 
 //print usage string and exit
@@ -344,7 +380,7 @@ void usage() {
 	printf("dec_server [−h] [-p port-number] [−l file]\n");
 	printf(
 			"−h : Print a usage summary with all options and exit."
-			"-p port-number : Listen on the given port. If not provided, dec_server will listen on port 9090."
-			"−l file : Log all requests and responses to the given file. If not, print all to stdout.\n");
+					"-p port-number : Listen on the given port. If not provided, dec_server will listen on port 9090."
+					"−l file : Log all requests and responses to the given file. If not, print all to stdout.\n");
 	exit(1);
 }
