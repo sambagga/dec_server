@@ -27,7 +27,7 @@ using namespace std;
 #define BUFSIZE 1024
 void usage();
 void setup_server();
-char events[26][26];
+char events[26][26], file_buf[BUF_LEN], logfile[256];
 char *port = "9090", *progname;
 int s, sock, ch, server, done;
 char *host = NULL;
@@ -41,6 +41,20 @@ void *get_in_addr(struct sockaddr *sa) {
 	}
 
 	return &(((struct sockaddr_in6*) sa)->sin6_addr);
+}
+void log_status() {
+	static int lcount = 0;
+	if (lcount == 0) {
+		logfile_fd = fopen(logfile, "w");
+		lcount++;
+	} else
+		logfile_fd = fopen(logfile, "a");
+	if (!logfile_fd) {
+		perror("Error in opening log file");
+	}
+	fprintf(logfile_fd, "%s", file_buf);
+
+	fclose(logfile_fd);
 }
 int checkquery(int from, int to, char tevents[26][26]) {
 	vector<char> que;
@@ -67,21 +81,17 @@ int checkquery(int from, int to, char tevents[26][26]) {
 }
 
 int addtograph(char from, char to, char tevents[26][26]) {
-	int check = checkquery(from, to, tevents);
+	int check;
+	check = checkquery(to, from, tevents);
 	if (check == 0) {
-		check = checkquery(to, from, tevents);
-		if (check == 0) {
-			tevents[from - 'A'][to - 'A'] = 1;
-			return 1;
-		} else
-			return 0;
-	} else if (check == 1) {
+		tevents[from - 'A'][to - 'A'] = 1;
+		return 1;
+	} else
 		return 0;
-	}
+
 }
 int main(int argc, char *argv[]) {
 	struct timeval optst, optend;
-	char logfile[256];
 	char buf[BUF_LEN];
 	int ch;
 	//check various options
@@ -105,9 +115,7 @@ int main(int argc, char *argv[]) {
 	int i = 0, temp;
 	//Open the file to log request and responses
 	if (lfile == 1) {
-		logfile_fd = fopen(logfile, "r");
-
-		fclose(logfile_fd);
+		logfile_fd = fopen(logfile, "w");
 	}
 	if ((s = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 		perror("socket");
@@ -133,7 +141,8 @@ void setup_server() {
 		uint32_t addr;
 		char bytes[4];
 	} fromaddr;
-	char buf[BUF_LEN], out_buf[BUF_LEN];
+	char buf[BUF_LEN], porint_buf[BUF_LEN], out_buf[BUF_LEN],
+			clients[200][BUF_LEN], req_buf[BUF_LEN];
 
 	fd_set master; // master file descriptor list
 	fd_set read_fds; // temp file descriptor list for select()
@@ -142,11 +151,10 @@ void setup_server() {
 	int sock; // newly accept()ed socket descriptor
 	struct sockaddr_storage remote; // client address
 	int nbytes;
-
 	char remoteIP[INET6_ADDRSTRLEN];
 
 	int yes = 1; // for setsockopt() SO_REUSEADDR, below
-	int i, j, k, rv, add = 0;
+	int i, j, k, rv, add = 0, flagfrom, flagto;
 
 	struct addrinfo hints, *ai, *p;
 
@@ -183,7 +191,7 @@ void setup_server() {
 
 	// if we got here, it means we didn't get bound
 	if (p == NULL) {
-		fprintf(stderr, "selectserver: failed to bind\n");
+		fprintf(stderr, "Failed to bind\n");
 		exit(2);
 	}
 
@@ -227,11 +235,12 @@ void setup_server() {
 							fdmax = sock;
 						}
 						printf(
-								"selectserver: new connection from %s on "
+								"New connection from %s on "
 										"socket %d\n",
 								inet_ntop(remote.ss_family,
 										get_in_addr((struct sockaddr*) &remote),
 										remoteIP, INET6_ADDRSTRLEN), sock);
+						strcpy(clients[sock], remoteIP);
 					}
 				} else {
 					// handle data from a client
@@ -239,7 +248,7 @@ void setup_server() {
 						// got error or connection closed by client
 						if (nbytes == 0) {
 							// connection closed
-							printf("selectserver: socket %d hung up\n", i);
+							printf("Socket %d hung up\n", i);
 						} else {
 							perror("recv");
 						}
@@ -248,7 +257,10 @@ void setup_server() {
 						// remove from master set
 					} else {
 						// we got some data from a client
-						write(fileno(stdout), buf, nbytes);
+						if (lfile == 1)
+							strcat(file_buf, buf);
+						else
+							write(fileno(stdout), buf, nbytes);
 						char *tstr, command[BUFSIZE];
 						//gets(buf);
 						int len, start = 0, q, end, action;
@@ -263,6 +275,7 @@ void setup_server() {
 								tevents[j][k] = events[j][k];
 							}
 						}
+
 						char *bound;
 						while (start < len - 1) {
 							bound = strchr(buf, ';');
@@ -273,17 +286,43 @@ void setup_server() {
 								for (q = start, k = 0; q < end; q++, k++)
 									command[k] = buf[q];
 								command[k] = '\0';
+								sprintf(req_buf,
+										"request received from %s:%s\n",
+										clients[i], command);
+								if (lfile == 1)
+									strcpy(file_buf, req_buf);
+								else
+									write(fileno(stdout), req_buf,
+											strlen(req_buf));
 								start = end + 1;
-								tstr = strtok(command, " ");
+								tstr = strtok(command, " ;");
 								if (strcmp(tstr, "insert") == 0)
 									action = 1;
 								else if (strcmp(tstr, "query") == 0)
 									action = 2;
-								else if (strcmp(tstr, "reset") == 0)
+								else if (strcmp(tstr, "reset") == 0) {
 									action = 3;
-								else {
-									sprintf(out_buf, "Wrong Command!");
+									for (k = 0; k < 26; k++) {
+										for (j = 0; j < 26; j++) {
+											events[k][j] = 0;
+											tevents[k][j] = 0;
+										}
+									}
+									sprintf(out_buf, "RESET DONE\n");
 									send(i, out_buf, strlen(out_buf), 0);
+									if (lfile == 1)
+										strcat(file_buf, out_buf);
+									else
+										write(fileno(stdout), out_buf,
+												strlen(out_buf));
+								} else {
+									sprintf(out_buf, "Wrong Command!\n");
+									send(i, out_buf, strlen(out_buf), 0);
+									if (lfile == 1)
+										strcat(file_buf, out_buf);
+									else
+										write(fileno(stdout), out_buf,
+												strlen(out_buf));
 									close(i);
 									FD_CLR(i, &master);
 									break;
@@ -300,23 +339,70 @@ void setup_server() {
 										if (add == 0) {
 											sprintf(
 													out_buf,
-													"CONFLICT DETECTED.INSERT FAILED");
+													"CONFLICT DETECTED.INSERT FAILED\n");
 											send(i, out_buf, strlen(out_buf),
 													0);
-											write(fileno(stdout), out_buf,
-													strlen(out_buf));
+											if (lfile == 1)
+												strcat(file_buf, out_buf);
+											else
+												write(fileno(stdout), out_buf,
+														strlen(out_buf));
 											break;
 										} else {
-											sprintf(out_buf, "INSERT DONE");
+											sprintf(out_buf, "INSERT DONE\n");
 										}
-										write(fileno(stdout), out_buf,
-												strlen(out_buf));
+										send(i, out_buf, strlen(out_buf), 0);
+										if (lfile == 1)
+											strcat(file_buf, out_buf);
+										else
+											write(fileno(stdout), out_buf,
+													strlen(out_buf));
 									} else if (action == 2) {
 										if (cnt == 0) {
 											from = tstr[0];
 											cnt++;
 										} else {
 											to = tstr[0];
+											flagfrom = 0;
+											flagto = 0;
+											for (j = 0; j < 26; j++) {
+												if (tevents[from - 'A'][j] == 1)
+													flagfrom = 1;
+												if (tevents[j][from - 'A'] == 1)
+													flagfrom = 1;
+												if (tevents[to - 'A'][j] == 1)
+													flagto = 1;
+												if (tevents[j][to - 'A'] == 1)
+													flagto = 1;
+											}
+											if (flagfrom == 0) {
+												sprintf(out_buf,
+														"Event not found:%c\n",
+														from);
+												send(i, out_buf,
+														strlen(out_buf), 0);
+												if (lfile == 1)
+													strcat(file_buf, out_buf);
+												else
+													write(fileno(stdout),
+															out_buf,
+															strlen(out_buf));
+												break;
+											}
+											if (flagto == 0) {
+												sprintf(out_buf,
+														"Event not found:%c\n",
+														to);
+												send(i, out_buf,
+														strlen(out_buf), 0);
+												if (lfile == 1)
+													strcat(file_buf, out_buf);
+												else
+													write(fileno(stdout),
+															out_buf,
+															strlen(out_buf));
+												break;
+											}
 											check = checkquery(from, to,
 													tevents);
 											if (check == 0) {
@@ -325,32 +411,37 @@ void setup_server() {
 												if (check == 0) {
 													sprintf(
 															out_buf,
-															"%c concurrent to %c",
+															"%c concurrent to %c\n",
 															from, to);
 												} else
 													sprintf(
 															out_buf,
-															"%c happened before %c",
+															"%c happened before %c\n",
 															to, from);
 											} else if (check == 1) {
-												sprintf(out_buf,
-														"%c happened before %c",
+												sprintf(
+														out_buf,
+														"%c happened before %c\n",
 														from, to);
 											}
 											send(i, out_buf, strlen(out_buf),
 													0);
-											write(fileno(stdout), out_buf,
-													strlen(out_buf));
+											if (lfile == 1)
+												strcat(file_buf, out_buf);
+											else
+												write(fileno(stdout), out_buf,
+														strlen(out_buf));
 										}
-									} else if (action == 3) {
-										for (i = 0; i < 26; i++)
-											for (j = 0; j < 26; j++)
-												events[i][j] = 0;
 									}
 									tstr = strtok(NULL, " ");
 								}
 							} else {
-								sprintf(out_buf, "Wrong Command!");
+								sprintf(out_buf, "Wrong Command!\n");
+								if (lfile == 1)
+									strcat(file_buf, out_buf);
+								else
+									write(fileno(stdout), out_buf,
+											strlen(out_buf));
 								send(i, out_buf, strlen(out_buf), 0);
 								close(i);
 								FD_CLR(i, &master);
@@ -360,6 +451,7 @@ void setup_server() {
 							if (add == 0)
 								break;
 						}
+						log_status();
 						if (add != 0) {
 							for (j = 0; j < 26; j++) {
 								for (k = 0; k < 26; k++) {
@@ -368,11 +460,11 @@ void setup_server() {
 							}
 						}
 					}
-				} // END handle data from client insert E->F A->B B->C C->D; query B F;
-			} // END got new incoming connection
-		} // END looping through file descriptors
-	} // END for(;;)--and you thought it would never end!
-
+				}
+			}
+		}
+	}
+	fclose(logfile_fd);
 }
 
 //print usage string and exit
