@@ -17,16 +17,13 @@
 #include	<netdb.h>
 #include	<netinet/in.h>
 #include	<inttypes.h>
-#include	<pthread.h>
-#include	<semaphore.h>
-#include	<time.h>
 #include 	<arpa/inet.h>
 #include 	<sys/stat.h>
 
 using namespace std;
 #define BUFSIZE 1024
-void usage();
-void setup_server();
+void usage(); // help function
+void server_handle();
 char events[26][26], file_buf[BUF_LEN], logfile[256];
 char *port = "9090", *progname;
 int s, sock, ch, server, done;
@@ -42,6 +39,7 @@ void *get_in_addr(struct sockaddr *sa) {
 
 	return &(((struct sockaddr_in6*) sa)->sin6_addr);
 }
+//to print in log file
 void log_status() {
 	static int lcount = 0;
 	if (lcount == 0) {
@@ -53,22 +51,22 @@ void log_status() {
 		perror("Error in opening log file");
 	}
 	fprintf(logfile_fd, "%s", file_buf);
-
 	fclose(logfile_fd);
 }
+//check query for happened before relationship using Breadth First Search in adjacency matrix
 int checkquery(int from, int to, char tevents[26][26]) {
-	vector<char> que;
+	vector<char> que; //queue to keep track of BFS
 	char temp;
 	int i, front = 0, back = 0;
-	que.push_back(from);
+	que.push_back(from); //initialize queue
 	back++;
 	while (front != back) {
-		temp = que[front];
+		temp = que[front]; //remove from front of queue
 		front++;
-		if (tevents[temp - 'A'][to - 'A'] == 1)
+		if (tevents[temp - 'A'][to - 'A'] == 1) //if found
 			return 1;
 		else {
-			for (i = 0; i < 26; i++) {
+			for (i = 0; i < 26; i++) { //push all the adjacent nodes in queue
 				if (tevents[temp - 'A'][i] == 1) {
 					que.push_back(i + 'A');
 					back++;
@@ -79,7 +77,7 @@ int checkquery(int from, int to, char tevents[26][26]) {
 	que.clear();
 	return 0;
 }
-
+//add event to graph(adjacency matrix)
 int addtograph(char from, char to, char tevents[26][26]) {
 	int check;
 	check = checkquery(to, from, tevents);
@@ -88,7 +86,6 @@ int addtograph(char from, char to, char tevents[26][26]) {
 		return 1;
 	} else
 		return 0;
-
 }
 int main(int argc, char *argv[]) {
 	struct timeval optst, optend;
@@ -121,22 +118,25 @@ int main(int argc, char *argv[]) {
 		perror("socket");
 		exit(1);
 	}
-	setup_server();
+	printf("Waiting for connections\n");
+	server_handle();
 	return (0);
 }
 
 /*
- * setup_server() - set up socket for mode of soc running as a server.
+ * server_handle() - set up server, accept client and process requests for event ordering
  */
 
-void setup_server() {
-	char tevents[26][26];
+void server_handle() {
+	char tevents[26][26]; //temporary matrix to hold events while processing request
 	struct sockaddr_in serv;
 	struct servent *se;
 	socklen_t len;
 	fd_set ready;
 	struct sockaddr_in msgfrom;
 	socklen_t msgsize;
+	struct in_addr ipv4addr;
+	hostent *clientName;
 	union {
 		uint32_t addr;
 		char bytes[4];
@@ -178,7 +178,7 @@ void setup_server() {
 			continue;
 		}
 
-		// lose the pesky "address already in use" error message
+		// close the and reuse the address if already in use
 		setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
 
 		if (bind(s, p->ai_addr, p->ai_addrlen) < 0) {
@@ -189,7 +189,6 @@ void setup_server() {
 		break;
 	}
 
-	// if we got here, it means we didn't get bound
 	if (p == NULL) {
 		fprintf(stderr, "Failed to bind\n");
 		exit(2);
@@ -240,7 +239,11 @@ void setup_server() {
 								inet_ntop(remote.ss_family,
 										get_in_addr((struct sockaddr*) &remote),
 										remoteIP, INET6_ADDRSTRLEN), sock);
-						strcpy(clients[sock], remoteIP);
+						inet_pton(AF_INET, remoteIP, &ipv4addr);
+						clientName = gethostbyaddr(&ipv4addr, sizeof ipv4addr,
+								AF_INET);
+
+						strcpy(clients[sock], clientName->h_name);
 					}
 				} else {
 					// handle data from a client
@@ -252,7 +255,7 @@ void setup_server() {
 						} else {
 							perror("recv");
 						}
-						close(i); // bye!
+						close(i); // close the connection
 						FD_CLR(i, &master);
 						// remove from master set
 					} else {
@@ -264,12 +267,12 @@ void setup_server() {
 						char *tstr, command[BUFSIZE];
 						//gets(buf);
 						int len, start = 0, q, end, action;
-						for (q = 0;
-								buf[q] != '\r' && buf[q] != '\n'
-										&& buf[q] != '\0'; q++) {
+						for (q = 0; buf[q] != '\r' && buf[q] != '\n' // read request
+						&& buf[q] != '\0'; q++) {
 						}
 						len = q;
 						q = 0;
+						// initialize temporary matrix to events
 						for (j = 0; j < 26; j++) {
 							for (k = 0; k < 26; k++) {
 								tevents[j][k] = events[j][k];
@@ -283,6 +286,7 @@ void setup_server() {
 								for (q = start; buf[q] != ';'; q++) {
 								}
 								end = q;
+								//get first command in a request
 								for (q = start, k = 0; q < end; q++, k++)
 									command[k] = buf[q];
 								command[k] = '\0';
@@ -295,13 +299,14 @@ void setup_server() {
 									write(fileno(stdout), req_buf,
 											strlen(req_buf));
 								start = end + 1;
-								tstr = strtok(command, " ;");
+								tstr = strtok(command, " ;"); //get the command type
 								if (strcmp(tstr, "insert") == 0)
 									action = 1;
 								else if (strcmp(tstr, "query") == 0)
 									action = 2;
 								else if (strcmp(tstr, "reset") == 0) {
 									action = 3;
+									// reset matrices
 									for (k = 0; k < 26; k++) {
 										for (j = 0; j < 26; j++) {
 											events[k][j] = 0;
@@ -316,6 +321,7 @@ void setup_server() {
 										write(fileno(stdout), out_buf,
 												strlen(out_buf));
 								} else {
+									//if command type not specified or illegal treated as Wrong command
 									sprintf(out_buf, "Wrong Command!\n");
 									send(i, out_buf, strlen(out_buf), 0);
 									if (lfile == 1)
@@ -332,7 +338,9 @@ void setup_server() {
 								int cnt = 0, check;
 
 								while (tstr != NULL) {
+									//insert request
 									if (action == 1) {
+										//get events from and to
 										from = tstr[0];
 										to = tstr[3];
 										add = addtograph(from, to, tevents);
@@ -357,7 +365,7 @@ void setup_server() {
 										else
 											write(fileno(stdout), out_buf,
 													strlen(out_buf));
-									} else if (action == 2) {
+									} else if (action == 2) { //query for order of events
 										if (cnt == 0) {
 											from = tstr[0];
 											cnt++;
@@ -365,6 +373,7 @@ void setup_server() {
 											to = tstr[0];
 											flagfrom = 0;
 											flagto = 0;
+											// check if event exists or not
 											for (j = 0; j < 26; j++) {
 												if (tevents[from - 'A'][j] == 1)
 													flagfrom = 1;
@@ -403,6 +412,7 @@ void setup_server() {
 															strlen(out_buf));
 												break;
 											}
+											//evaluate query
 											check = checkquery(from, to,
 													tevents);
 											if (check == 0) {
@@ -447,12 +457,13 @@ void setup_server() {
 								FD_CLR(i, &master);
 								break;
 							}
-
+							if (lfile == 1)
+								log_status(); //print log of request and response to file
 							if (add == 0)
 								break;
 						}
-						log_status();
-						if (add != 0) {
+
+						if (add != 0) { //if request successful then commit changes
 							for (j = 0; j < 26; j++) {
 								for (k = 0; k < 26; k++) {
 									events[j][k] = tevents[j][k];
