@@ -1,0 +1,11 @@
+To run dec_server:
+1. Compile the code using ./makefile
+2. Modify the execute file according to :
+   dec_server [−h] [-p port-number] [−l file]
+	-h 	       : Print a usage summary with all options and exit.
+	-p port-number : Listen on the given port. If not provided, dec_server will listen on port 9090.
+	-l file        : Log all requests and responses to the given file. If not, print all to stdout.
+3. Execute the code using ./execute.
+4. The input assumes that all the events are in capital letter and if client gives wrong command the connection to it is closed.
+5. The input should be in strict format as specified in project requirements.
+

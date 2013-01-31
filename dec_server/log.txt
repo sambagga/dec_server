@@ -1,0 +1,6 @@
+request received from localhost.localdomain:insert A->B B->C B->D
+INSERT DONE
+INSERT DONE
+INSERT DONE
+request received from localhost.localdomain:query A D
+A happened before D
